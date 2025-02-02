@@ -1,0 +1,354 @@
+Deploying a **full-stack application on Slurm on top of Kubernetes** on an **on-premise CentOS** cluster requires a few key steps, which include setting up Kubernetes on CentOS, configuring Slurm, containerizing your application, and deploying the full-stack application within the cluster. Here's a detailed guide to help you with the deployment process:
+
+---
+
+### **1. Setting Up Kubernetes on CentOS (On-Premise)**
+
+#### **Install Kubernetes (kubeadm, kubelet, kubectl)**
+
+1. **Prepare your CentOS nodes**:
+   - Ensure that your CentOS nodes are prepared for Kubernetes. This includes configuring network settings and ensuring that the nodes are ready for Kubernetes components.
+   
+   Example:
+   ```bash
+   sudo hostnamectl set-hostname master-node
+   ```
+
+2. **Install Docker**:
+   Kubernetes requires Docker to manage containers. Install Docker if not already installed:
+   ```bash
+   sudo yum install -y yum-utils device-mapper-persistent-data lvm2
+   sudo yum-config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+   sudo yum install -y docker-ce docker-ce-cli containerd.io
+   sudo systemctl start docker
+   sudo systemctl enable docker
+   ```
+
+3. **Install Kubernetes**:
+   Add the Kubernetes repository and install the necessary components:
+   ```bash
+   sudo cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+   [kubernetes]
+   name=Kubernetes
+   baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+   enabled=1
+   gpgcheck=1
+   gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg
+   EOF
+   ```
+
+   Install `kubeadm`, `kubelet`, and `kubectl`:
+   ```bash
+   sudo yum install -y kubelet kubeadm kubectl
+   sudo systemctl enable --now kubelet
+   ```
+
+4. **Initialize Kubernetes Master Node**:
+   On your master node, run the following to initialize the Kubernetes cluster:
+   ```bash
+   sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+   ```
+
+5. **Set up kubeconfig**:
+   After initializing the cluster, set up kubeconfig on the master node to allow `kubectl` access:
+   ```bash
+   mkdir -p $HOME/.kube
+   sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+   sudo chown $(id -u):$(id -g) $HOME/.kube/config
+   ```
+
+6. **Install Network Plugin (Calico or Flannel)**:
+   A network plugin is required for communication between nodes. Here’s an example using Flannel:
+   ```bash
+   kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+   ```
+
+7. **Join Worker Nodes**:
+   To add worker nodes to the Kubernetes cluster, run the `kubeadm join` command provided by the `kubeadm init` output on each worker node.
+
+---
+
+### **2. Install and Configure Slurm on Kubernetes**
+
+Slurm is a powerful workload manager, typically used for high-performance computing (HPC) and batch job scheduling. You can run Slurm jobs within Kubernetes, enabling efficient scheduling and management of compute-heavy tasks.
+
+#### **Option 1: Slurm Operator for Kubernetes**
+
+The **Slurm Operator** integrates Slurm with Kubernetes, allowing you to manage Slurm jobs directly within Kubernetes.
+
+1. **Install the Slurm Operator**:
+   Clone and deploy the Slurm Operator into your Kubernetes cluster. The Slurm Operator handles Slurm-related jobs, such as launching `slurmd` and `slurmctld` pods and managing job submission.
+
+   Clone the repository and install:
+   ```bash
+   git clone https://github.com/SchedMD/slurm-operator.git
+   cd slurm-operator
+   kubectl apply -f deploy/
+   ```
+
+2. **Set Up Slurm Components (slurmctld, slurmd)**:
+   The Slurm Operator will manage the deployment of Slurm components. Make sure that you configure **slurmctld** (Slurm controller) and **slurmd** (Slurm daemon) as Kubernetes pods. You can create a custom **SlurmCluster** resource to manage these pods.
+
+   Example `SlurmCluster` configuration:
+   ```yaml
+   apiVersion: slurm.schedmd.com/v1alpha1
+   kind: SlurmCluster
+   metadata:
+     name: slurm-cluster
+   spec:
+     slurmctld:
+       replicas: 1
+     slurmd:
+       replicas: 2
+     slurmdbd:
+       replicas: 1
+     network:
+       plugin: flannel
+   ```
+
+   Apply this configuration to create the necessary Slurm components:
+   ```bash
+   kubectl apply -f slurm-cluster.yaml
+   ```
+
+3. **Verify Slurm Daemon Deployment**:
+   After deployment, check the status of your Slurm components:
+   ```bash
+   kubectl get pods -l app=slurm
+   ```
+
+#### **Option 2: Manual Slurm Installation**
+
+If you prefer not to use the Slurm Operator, you can manually install and configure Slurm on Kubernetes nodes. This approach involves deploying Slurm’s `slurmctld` and `slurmd` as containers.
+
+1. **Create Docker Images for Slurm Components**:
+   - **slurmctld**: The Slurm controller is the central component for managing Slurm jobs.
+   - **slurmd**: The Slurm daemon runs on each node to execute jobs.
+   
+   You can either use existing Slurm images or build your own Dockerfiles. Here’s an example Dockerfile for **slurmctld**:
+   ```dockerfile
+   FROM ubuntu:20.04
+   RUN apt-get update && apt-get install -y slurm-wlm
+   CMD ["slurmctld"]
+   ```
+
+   Similarly, create a Dockerfile for `slurmd`:
+   ```dockerfile
+   FROM ubuntu:20.04
+   RUN apt-get update && apt-get install -y slurm-wlm
+   CMD ["slurmd"]
+   ```
+
+2. **Deploy Slurm Daemon Pods**:
+   Create a Kubernetes deployment for the `slurmd` daemons and the `slurmctld` controller, similar to the Kubernetes deployment files used for other applications.
+
+   Example for `slurmctld`:
+   ```yaml
+   apiVersion: apps/v1
+   kind: Deployment
+   metadata:
+     name: slurmctld
+   spec:
+     replicas: 1
+     selector:
+       matchLabels:
+         app: slurmctld
+     template:
+       metadata:
+         labels:
+           app: slurmctld
+       spec:
+         containers:
+           - name: slurmctld
+             image: <your-slurmctld-image>
+             ports:
+               - containerPort: 7003
+   ```
+
+---
+
+### **3. Containerize and Deploy Your Full-Stack Application**
+
+Now, let's containerize your full-stack application (frontend, backend, and database).
+
+#### **Frontend Container**
+For a frontend, e.g., a React app, create a Dockerfile:
+```dockerfile
+FROM node:16-alpine
+WORKDIR /app
+COPY . .
+RUN npm install
+RUN npm run build
+EXPOSE 80
+CMD ["npm", "start"]
+```
+
+#### **Backend Container**
+For a backend (e.g., Node.js with Express), create a Dockerfile:
+```dockerfile
+FROM node:16-alpine
+WORKDIR /app
+COPY . .
+RUN npm install
+EXPOSE 3000
+CMD ["npm", "start"]
+```
+
+#### **Database Container**
+For a database (e.g., PostgreSQL):
+```dockerfile
+FROM postgres:13
+```
+
+#### **Create Kubernetes Deployments**
+Once the Docker images are ready, create Kubernetes deployments for each part of the stack.
+
+- **Frontend Deployment**:
+  ```yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: frontend-deployment
+  spec:
+    replicas: 2
+    selector:
+      matchLabels:
+        app: frontend
+    template:
+      metadata:
+        labels:
+          app: frontend
+      spec:
+        containers:
+          - name: frontend
+            image: <frontend-image>
+            ports:
+              - containerPort: 80
+  ```
+
+- **Backend Deployment**:
+  ```yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: backend-deployment
+  spec:
+    replicas: 2
+    selector:
+      matchLabels:
+        app: backend
+    template:
+      metadata:
+        labels:
+          app: backend
+      spec:
+        containers:
+          - name: backend
+            image: <backend-image>
+            ports:
+              - containerPort: 3000
+  ```
+
+- **Database Deployment**:
+  ```yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: db-deployment
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: database
+    template:
+      metadata:
+        labels:
+          app: database
+      spec:
+        containers:
+          - name: database
+            image: postgres:13
+            ports:
+              - containerPort: 5432
+  ```
+
+---
+
+### **4. Deploy and Expose Services**
+
+To expose your application, define Kubernetes services.
+
+- **Frontend Service**:
+  ```yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: frontend-service
+  spec:
+    selector:
+      app: frontend
+    ports:
+      - protocol: TCP
+        port: 80
+        targetPort: 80
+    type: LoadBalancer
+  ```
+
+- **Backend Service**:
+  ```yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: backend-service
+  spec:
+    selector:
+      app: backend
+    ports:
+      - protocol: TCP
+        port: 3000
+        targetPort: 3000
+    type: ClusterIP
+  ```
+
+- **Database Service**:
+  ```yaml
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: db-service
+  spec:
+    selector:
+      app: database
+    ports:
+      - protocol: TCP
+        port: 5432
+        targetPort: 5432
+    type: ClusterIP
+  ```
+
+---
+
+### **5. Access Your Application**
+
+- After deploying the services, the frontend will be accessible via the external IP provided by the LoadBalancer service.
+- The backend and database services will be accessible internally within the Kubernetes cluster.
+
+---
+
+### **6. Monitor and Manage Jobs with Slurm (Optional)**
+
+You can use **Slurm** to manage batch jobs or computational tasks that are resource-intensive. To submit jobs to Slurm from within Kubernetes, you can configure Slurm jobs as pods or containers. Use **Slurm's batch job submission** to handle jobs efficiently.
+
+---
+
+### **Summary**
+
+To deploy a full-stack application on **Slurm on top of Kubernetes** in an **on-premise CentOS cluster**, you need to:
+
+1. Set up Kubernetes using **kubeadm** on CentOS.
+2. Install and configure **Slurm** using either the **Slurm Operator** or manual deployment.
+3. Containerize your full-stack application components (frontend, backend, database).
+4. Deploy your application on Kubernetes with appropriate **Deployments** and **Services**.
+5. Optionally, configure Slurm to handle high-performance or batch computing tasks.
+
+This approach allows you to leverage both **Kubernetes** for container orchestration and **Slurm** for job scheduling, providing a flexible and efficient way to manage complex workloads in your on-premise environment.
