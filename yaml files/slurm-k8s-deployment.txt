@@ -1,0 +1,228 @@
+# slurm-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: slurm-config
+data:
+  slurm.conf: |
+    ClusterName=kubernetes
+    SlurmctldHost=slurmctld
+    
+    # COMPUTE NODES
+    NodeName=compute[1-3] CPUs=4 RealMemory=4096 State=UNKNOWN
+    PartitionName=normal Default=yes Nodes=compute[1-3] State=UP MaxTime=INFINITE
+    
+    # SCHEDULING
+    SelectType=select/cons_tres
+    SelectTypeParameters=CR_Core
+    
+    # LOGGING
+    SlurmctldDebug=debug5
+    SlurmdDebug=debug5
+    SlurmctldLogFile=/var/log/slurm/slurmctld.log
+    SlurmdLogFile=/var/log/slurm/slurmd.log
+    
+    # ACCOUNTING
+    AccountingStorageType=accounting_storage/slurmdbd
+    AccountingStorageHost=slurmdbd
+    AccountingStoragePort=6819
+
+---
+# persistent-volumes.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: slurm-logs-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+
+---
+# slurmdbd-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slurmdbd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slurmdbd
+  template:
+    metadata:
+      labels:
+        app: slurmdbd
+    spec:
+      containers:
+      - name: slurmdbd
+        image: giovtorres/slurm-docker-cluster:latest
+        command: ["/bin/bash", "-c", "sleep 30 && /usr/sbin/slurmdbd -D -vvv"]
+        ports:
+        - containerPort: 6819
+        volumeMounts:
+        - name: slurm-config
+          mountPath: /etc/slurm/slurm.conf
+          subPath: slurm.conf
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurm-config
+
+---
+# slurmctld-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slurmctld
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slurmctld
+  template:
+    metadata:
+      labels:
+        app: slurmctld
+    spec:
+      containers:
+      - name: slurmctld
+        image: giovtorres/slurm-docker-cluster:latest
+        command: ["/bin/bash", "-c", "sleep 30 && /usr/sbin/slurmctld -D -vvv"]
+        ports:
+        - containerPort: 6817
+        volumeMounts:
+        - name: slurm-config
+          mountPath: /etc/slurm/slurm.conf
+          subPath: slurm.conf
+        - name: slurm-logs
+          mountPath: /var/log/slurm
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurm-config
+      - name: slurm-logs
+        persistentVolumeClaim:
+          claimName: slurm-logs-pvc
+
+---
+# slurmd-daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: slurmd
+spec:
+  selector:
+    matchLabels:
+      app: slurmd
+  template:
+    metadata:
+      labels:
+        app: slurmd
+    spec:
+      containers:
+      - name: slurmd
+        image: giovtorres/slurm-docker-cluster:latest
+        command: ["/bin/bash", "-c", "sleep 30 && /usr/sbin/slurmd -D -vvv"]
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: slurm-config
+          mountPath: /etc/slurm/slurm.conf
+          subPath: slurm.conf
+        - name: slurm-logs
+          mountPath: /var/log/slurm
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurm-config
+      - name: slurm-logs
+        persistentVolumeClaim:
+          claimName: slurm-logs-pvc
+
+---
+# monitoring-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    scrape_configs:
+      - job_name: 'slurm'
+        static_configs:
+          - targets: ['slurmctld:6817', 'slurmd:6818']
+
+---
+# prometheus-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+
+---
+# network-policy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: slurm-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: slurmctld
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: slurmd
+    ports:
+    - protocol: TCP
+      port: 6817
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: slurmd
