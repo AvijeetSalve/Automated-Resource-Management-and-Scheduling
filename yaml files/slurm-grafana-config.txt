@@ -1,0 +1,102 @@
+# grafana-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+data:
+  grafana.ini: |
+    [server]
+    root_url = http://grafana:3000
+    [security]
+    admin_user = admin
+    [auth.anonymous]
+    enabled = false
+
+  slurm-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "SLURM Cluster Metrics",
+        "panels": [
+          {
+            "title": "Cluster Node Status",
+            "type": "stat",
+            "datasource": "Prometheus",
+            "targets": [
+              {
+                "expr": "slurm_node_state",
+                "legendFormat": "{{state}}"
+              }
+            ]
+          },
+          {
+            "title": "Job Queue Status",
+            "type": "timeseries",
+            "datasource": "Prometheus",
+            "targets": [
+              {
+                "expr": "slurm_queue_size",
+                "legendFormat": "{{partition}}"
+              }
+            ]
+          },
+          {
+            "title": "CPU Utilization",
+            "type": "gauge",
+            "datasource": "Prometheus",
+            "targets": [
+              {
+                "expr": "avg(slurm_cpu_usage)"
+              }
+            ]
+          },
+          {
+            "title": "Memory Usage",
+            "type": "graph",
+            "datasource": "Prometheus",
+            "targets": [
+              {
+                "expr": "slurm_memory_usage"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+# grafana-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+        volumeMounts:
+        - name: config
+          mountPath: /etc/grafana/grafana.ini
+          subPath: grafana.ini
+        - name: dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+      volumes:
+      - name: config
+        configMap:
+          name: grafana-config
+      - name: dashboards
+        configMap:
+          name: grafana-config
+          items:
+            - key: slurm-dashboard.json
+              path: slurm-dashboard.json
