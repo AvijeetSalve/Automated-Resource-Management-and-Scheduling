@@ -1,0 +1,70 @@
+# backup-cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: slurm-backup
+spec:
+  schedule: "0 1 * * *"  # Run daily at 1 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Backup SLURM configuration
+              kubectl get configmap slurm-config -o yaml > /backup/slurm-config-$(date +%Y%m%d).yaml
+              
+              # Backup SLURM database
+              kubectl exec -it $(kubectl get pod -l app=slurmdbd -o jsonpath='{.items[0].metadata.name}') -- \
+                mysqldump --all-databases > /backup/slurm-db-$(date +%Y%m%d).sql
+              
+              # Backup job history
+              kubectl exec -it $(kubectl get pod -l app=slurmctld -o jsonpath='{.items[0].metadata.name}') -- \
+                sacct --format=job,user,account,start,end,state -n > /backup/job-history-$(date +%Y%m%d).txt
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+          volumes:
+          - name: backup-volume
+            persistentVolumeClaim:
+              claimName: backup-pvc
+
+---
+# backup-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# disaster-recovery-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disaster-recovery-config
+data:
+  recovery-script.sh: |
+    #!/bin/bash
+    
+    # Restore SLURM configuration
+    kubectl apply -f /backup/slurm-config-latest.yaml
+    
+    # Restore SLURM database
+    kubectl exec -it $(kubectl get pod -l app=slurmdbd -o jsonpath='{.items[0].metadata.name}') -- \
+      mysql < /backup/slurm-db-latest.sql
+    
+    # Restart SLURM services
+    kubectl rollout restart deployment/slurmctld
+    kubectl rollout restart deployment/slurmdbd
+    kubectl rollout restart daemonset/slurmd
