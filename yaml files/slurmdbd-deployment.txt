@@ -1,0 +1,29 @@
+# slurmdbd-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slurmdbd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slurmdbd
+  template:
+    metadata:
+      labels:
+        app: slurmdbd
+    spec:
+      containers:
+      - name: slurmdbd
+        image: giovtorres/slurm-docker-cluster:latest
+        command: ["/bin/bash", "-c", "sleep 30 && /usr/sbin/slurmdbd -D -vvv"]
+        ports:
+        - containerPort: 6819
+        volumeMounts:
+        - name: slurm-config
+          mountPath: /etc/slurm/slurm.conf
+          subPath: slurm.conf
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurm-config
