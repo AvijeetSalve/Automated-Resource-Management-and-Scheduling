@@ -1,0 +1,41 @@
+# slurmctld-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slurmctld
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slurmctld
+  template:
+    metadata:
+      labels:
+        app: slurmctld
+    spec:
+      containers:
+      - name: slurmctld
+        image: giovtorres/slurm-docker-cluster:latest
+        command: ["/bin/bash", "-c", "sleep 30 && /usr/sbin/slurmctld -D -vvv"]
+        ports:
+        - containerPort: 6817
+        volumeMounts:
+        - name: slurm-config
+          mountPath: /etc/slurm/slurm.conf
+          subPath: slurm.conf
+        - name: slurm-logs
+          mountPath: /var/log/slurm
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurm-config
+      - name: slurm-logs
+        persistentVolumeClaim:
+          claimName: slurm-logs-pvc
