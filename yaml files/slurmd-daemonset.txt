@@ -1,0 +1,40 @@
+# slurmd-daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: slurmd
+spec:
+  selector:
+    matchLabels:
+      app: slurmd
+  template:
+    metadata:
+      labels:
+        app: slurmd
+    spec:
+      containers:
+      - name: slurmd
+        image: giovtorres/slurm-docker-cluster:latest
+        command: ["/bin/bash", "-c", "sleep 30 && /usr/sbin/slurmd -D -vvv"]
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: slurm-config
+          mountPath: /etc/slurm/slurm.conf
+          subPath: slurm.conf
+        - name: slurm-logs
+          mountPath: /var/log/slurm
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurm-config
+      - name: slurm-logs
+        persistentVolumeClaim:
+          claimName: slurm-logs-pvc
