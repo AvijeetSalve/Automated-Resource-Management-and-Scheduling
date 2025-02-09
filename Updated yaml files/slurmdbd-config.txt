@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: slurmdbd-config
+  namespace: slurm
+data:
+  slurmdbd.conf: |
+    StorageType=accounting_storage/pgsql
+    StorageHost=postgresql.database.svc.cluster.local
+    StoragePort=5432
+    StorageUser=slurm
+    StoragePass=slurm-password
+    StorageLoc=slurmdb
+    
+=========================================================
+
+kubectl apply -f slurmdbd-config.yaml -n slurm
