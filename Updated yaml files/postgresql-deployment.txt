@@ -1,0 +1,40 @@
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+helm install postgresql bitnami/postgresql -n database
+
+===================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql
+  namespace: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+      - name: postgresql
+        image: postgres:15
+        env:
+        - name: POSTGRES_PASSWORD
+          value: "yourpassword"
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - mountPath: /var/lib/postgresql/data
+          name: postgresql-data
+      volumes:
+      - name: postgresql-data
+        persistentVolumeClaim:
+          claimName: postgresql-pvc
+
+=====================================================================
+
+kubectl apply -f postgresql-deployment.yaml -n database
