@@ -11,6 +11,3 @@ spec:
     port: 5432
     targetPort: 5432
 
-=====================================================================
-
-kubectl apply -f postgresql-service.yaml -n database
