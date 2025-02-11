@@ -10,6 +10,3 @@ spec:
     requests:
       storage: 10Gi
 
-==================================================================
-
-kubectl apply -f postgresql-pvc.yaml -n database
