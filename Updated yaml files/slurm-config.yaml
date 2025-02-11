@@ -7,7 +7,3 @@ data:
   slurm.conf: |
     ControlMachine=slurmctld
     SlurmUser=slurm
-    
-=========================================================
-
-kubectl apply -f slurm-config.yaml -n slurm
