@@ -12,6 +12,3 @@ data:
     StoragePass=slurm-password
     StorageLoc=slurmdb
     
-=========================================================
-
-kubectl apply -f slurmdbd-config.yaml -n slurm
