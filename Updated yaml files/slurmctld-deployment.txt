@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slurmctld
+  namespace: slurm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slurmctld
+  template:
+    metadata:
+      labels:
+        app: slurmctld
+    spec:
+      containers:
+      - name: slurmctld
+        image: your-slurm-image:latest
+        ports:
+        - containerPort: 6817
+        volumeMounts:
+        - mountPath: /etc/slurm
+          name: slurm-config
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurm-config
+    
+=========================================================
+
+kubectl apply -f slurmctld-deployment.yaml -n slurm
