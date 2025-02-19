@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slurmdbd
+  namespace: slurm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: slurmdbd
+  template:
+    metadata:
+      labels:
+        app: slurmdbd
+    spec:
+      containers:
+      - name: slurmdbd
+        image: your-slurm-image:latest
+        volumeMounts:
+        - mountPath: /etc/slurm
+          name: slurm-config
+      volumes:
+      - name: slurm-config
+        configMap:
+          name: slurmdbd-config
+    
+=========================================================
+
+kubectl apply -f slurmdbd-deployment.yaml -n slurm
